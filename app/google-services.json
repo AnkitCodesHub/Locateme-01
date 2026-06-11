@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "71071742358",
+    "firebase_url": "https://locateme-d975b-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "locateme-d975b",
+    "storage_bucket": "locateme-d975b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:71071742358:android:ee8454b5ef060a1b2bc5b7",
+        "android_client_info": {
+          "package_name": "com.locationtracker.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "71071742358-9fh1h9g15bbaj03b0fi6rs4kg7vpdr3g.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.locationtracker.app",
+            "certificate_hash": "b00a5347909e64655f2eabc92a6ffe8a142c3732"
+          }
+        },
+        {
+          "client_id": "71071742358-3fnao9lfmpqkhtn3hebahrpuujg5gbpv.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC19HFBywvdfvsO0hyDR9LWVo8AbdN3Sd8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "71071742358-3fnao9lfmpqkhtn3hebahrpuujg5gbpv.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

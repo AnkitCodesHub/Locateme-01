@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">LocateMe</string>
+    <string name="notification_channel_name">Location Sharing</string>
+    <string name="notification_channel_desc">Shows when LocateMe is actively sharing your location</string>
+    <string name="notification_title">Sharing Location</string>
+    <string name="notification_text">Your location is being shared with friends</string>
+    <string name="permission_rationale">LocateMe needs location permission to share your real-time position with friends.</string>
+</resources>
