@@ -25,7 +25,10 @@ import com.locationtracker.app.ui.theme.LocateMeTheme
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
-import com.locationtracker.app.service.LocationTrackingWorker
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.Constraints
+import androidx.work.NetworkType
+import com.locationtracker.app.service.LocationTimelineWorker
 import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
@@ -44,12 +47,29 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         requestRuntimePermissions()
 
-        val periodicWorkRequest = PeriodicWorkRequestBuilder<LocationTrackingWorker>(10, TimeUnit.MINUTES).build()
+        // Fire once immediately on app open
+        val immediateWork = OneTimeWorkRequestBuilder<LocationTimelineWorker>()
+            .addTag("immediate_timeline")
+            .build()
+        WorkManager.getInstance(this).enqueue(immediateWork)
+
+        // Then every 10 minutes
+        val periodicWork = PeriodicWorkRequestBuilder<LocationTimelineWorker>(10, TimeUnit.MINUTES)
+            .addTag("periodic_timeline")
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .build()
+            )
+            .build()
+
         WorkManager.getInstance(this).enqueueUniquePeriodicWork(
             "LocationTimelineWorker",
             ExistingPeriodicWorkPolicy.KEEP,
-            periodicWorkRequest
+            periodicWork
         )
+
+        Log.d("MainActivity", "WorkManager scheduled - immediate + every 10 minutes")
 
         setContent {
             LocateMeTheme {

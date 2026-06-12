@@ -1,6 +1,7 @@
 package com.locationtracker.app.ui.screen
 
 import android.location.Geocoder
+import android.util.Log
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -24,6 +25,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.MaterialTheme
+import com.locationtracker.app.data.model.TimelineItem
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.FitnessCenter
@@ -132,6 +140,52 @@ fun FriendProfileScreen(
         }
     }
 
+    val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+    val currentDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+
+    var recentActivity by remember { mutableStateOf<List<TimelineItem>>(emptyList()) }
+    var isLoadingActivity by remember { mutableStateOf(true) }
+
+    DisposableEffect(friendId) {
+        if (currentUserId.isEmpty() || friendId.isEmpty()) {
+            isLoadingActivity = false
+            return@DisposableEffect onDispose {}
+        }
+        
+        val ref = Firebase.database.reference
+            .child("friend_timelines")
+            .child(currentUserId)
+            .child(friendId)
+            .child(currentDate)
+        
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                isLoadingActivity = false
+                val items = mutableListOf<TimelineItem>()
+                snapshot.children.forEach { child ->
+                    val name = child.child("locationName").getValue(String::class.java) ?: return@forEach
+                    val start = child.child("startTime").getValue(String::class.java) ?: ""
+                    val end = child.child("endTime").getValue(String::class.java) ?: ""
+                    val ts = child.child("timestamp").getValue(Long::class.java) ?: 0L
+                    items.add(TimelineItem(
+                        locationName = name,
+                        startTime = start,
+                        endTime = end,
+                        timestamp = ts
+                    ))
+                }
+                recentActivity = items.sortedByDescending { it.timestamp }
+                Log.d("FriendProfile", "Loaded ${items.size} activities for $friendId")
+            }
+            override fun onCancelled(error: DatabaseError) {
+                isLoadingActivity = false
+                Log.e("FriendProfile", "Failed: ${error.message}")
+            }
+        }
+        ref.addValueEventListener(listener)
+        onDispose { ref.removeEventListener(listener) }
+    }
+
     Scaffold(
         containerColor = Color(0xFF0D1B2A),
         topBar = {
@@ -222,33 +276,104 @@ fun FriendProfileScreen(
             // ── Recent Activity Section ───────────────────────────────────────
             Text(
                 text = "Recent Activity",
-                color = Color.White,
+                style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
-                fontSize = 18.sp,
+                color = Color.White,
                 modifier = Modifier.padding(bottom = 16.dp)
             )
 
-            if (isFriendLive && liveAddress != null) {
-                val timeString = remember(liveTimestamp) {
-                    val ts = liveTimestamp ?: System.currentTimeMillis()
-                    SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(ts))
+            when {
+                isLoadingActivity -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(32.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color(0xFF4FC3F7))
+                    }
                 }
-
-                // Timeline live update
-                ActivityTimelineLive(
-                    locationName = liveAddress!!,
-                    timeString = timeString
-                )
-            } else {
-                Box(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "No active navigation timeline available for this friend.",
-                        color = Color(0xFF8899AA),
-                        fontSize = 14.sp
-                    )
+                recentActivity.isEmpty() -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(32.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                "No recent activity",
+                                color = Color.Gray,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                "Activity will appear when your friend is active",
+                                color = Color.Gray,
+                                fontSize = 12.sp,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                }
+                else -> {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 400.dp)
+                    ) {
+                        items(recentActivity) { item ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 8.dp)
+                            ) {
+                                // Timeline dot
+                                Box(
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF4FC3F7).copy(alpha = 0.18f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.LocationOn,
+                                        contentDescription = null,
+                                        tint = Color(0xFF4FC3F7),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                
+                                Spacer(modifier = Modifier.width(12.dp))
+                                
+                                // Activity details
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(top = 4.dp)
+                                ) {
+                                    Text(
+                                        text = item.locationName,
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color.White
+                                    )
+                                    Text(
+                                        text = "${item.startTime} - ${item.endTime}",
+                                        fontSize = 13.sp,
+                                        color = Color(0xFF8899AA)
+                                    )
+                                }
+                            }
+                            HorizontalDivider(
+                                color = Color(0xFF1E2D3D),
+                                modifier = Modifier.padding(start = 52.dp, top = 8.dp, bottom = 8.dp)
+                            )
+                        }
+                    }
                 }
             }
 

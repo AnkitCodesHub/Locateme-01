@@ -1,0 +1,23 @@
+{
+  "rules": {
+    ".read": "auth != null",
+    ".write": "auth != null",
+    "users": {
+      ".indexOn": ["email"]
+    },
+    "user_timelines": {
+      "$userId": {
+        ".read": "auth != null",
+        ".write": "$userId === auth.uid"
+      }
+    },
+    "friend_timelines": {
+      "$recipientId": {
+        ".read": "$recipientId === auth.uid",
+        "$senderId": {
+          ".write": "$senderId === auth.uid"
+        }
+      }
+    }
+  }
+}

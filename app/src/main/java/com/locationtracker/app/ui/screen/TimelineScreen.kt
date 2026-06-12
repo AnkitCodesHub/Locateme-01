@@ -1,5 +1,6 @@
 package com.locationtracker.app.ui.screen
 
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,15 +15,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.ShoppingCart
-import androidx.compose.material.icons.filled.Work
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
@@ -31,35 +29,76 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-
-private data class TimelineEntry(
-    val icon: ImageVector,
-    val place: String,
-    val timeRange: String,
-    val date: String,
-    val iconColor: Color
-)
-
-private val sampleTimeline = listOf(
-    TimelineEntry(Icons.Filled.Home, "Home", "14:00 – 17:40", "Today", Color(0xFF4FC3F7)),
-    TimelineEntry(Icons.Filled.FitnessCenter, "Gym", "17:00 – 19:00", "Today", Color(0xFF66BB6A)),
-    TimelineEntry(Icons.Filled.Work, "Office", "09:00 – 13:30", "Yesterday", Color(0xFFFFA726)),
-    TimelineEntry(Icons.Filled.ShoppingCart, "Mall", "15:00 – 17:00", "Yesterday", Color(0xFFAB47BC)),
-    TimelineEntry(Icons.Filled.Home, "Home", "07:30 – 09:00", "2 days ago", Color(0xFF4FC3F7)),
-    TimelineEntry(Icons.Filled.LocationOn, "Park", "18:00 – 20:00", "2 days ago", Color(0xFF26C6DA))
-)
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
+import com.google.firebase.database.ValueEventListener
+import com.google.firebase.database.ktx.database
+import com.google.firebase.ktx.Firebase
+import com.locationtracker.app.data.model.TimelineItem
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TimelineScreen() {
+    val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+    val currentDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+
+    var timelineItems by remember { mutableStateOf<List<TimelineItem>>(emptyList()) }
+
+    DisposableEffect(currentUserId) {
+        if (currentUserId.isEmpty()) return@DisposableEffect onDispose {}
+
+        val ref = Firebase.database.reference
+            .child("user_timelines")
+            .child(currentUserId)
+            .child(currentDate)
+
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val items = mutableListOf<TimelineItem>()
+                snapshot.children.forEach { child ->
+                    val name = child.child("locationName").getValue(String::class.java) ?: return@forEach
+                    val start = child.child("startTime").getValue(String::class.java) ?: ""
+                    val end = child.child("endTime").getValue(String::class.java) ?: ""
+                    val ts = child.child("timestamp").getValue(Long::class.java) ?: 0L
+                    
+                    items.add(
+                        TimelineItem(
+                            locationName = name,
+                            startTime = start,
+                            endTime = end,
+                            timestamp = ts
+                        )
+                    )
+                }
+                timelineItems = items.sortedByDescending { it.timestamp }
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                Log.e("TimelineScreen", "${error.message}")
+            }
+        }
+        ref.addValueEventListener(listener)
+        onDispose {
+            ref.removeEventListener(listener)
+        }
+    }
+
     Scaffold(
         containerColor = Color(0xFF0D1B2A),
         topBar = {
@@ -76,72 +115,48 @@ fun TimelineScreen() {
             )
         }
     ) { paddingValues ->
-        // Pre-compute groups to avoid LazyListScope type-inference issues
-        val grouped = sampleTimeline.groupBy { it.date }
-        val groupKeys = grouped.keys.toList()
-
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(0.dp)
-        ) {
-            groupKeys.forEach { date ->
-                val entries = grouped[date] ?: return@forEach
-                item(key = "header_$date") {
-                    DateGroupHeader(date = date)
-                }
-                items(count = entries.size, key = { idx -> "entry_${date}_$idx" }) { idx ->
-                    val entry = entries[idx]
-                    val isLast = idx == entries.size - 1
-                    TimelineItem(entry = entry, showConnector = !isLast)
+        if (timelineItems.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        "No activity yet",
+                        color = Color.Gray,
+                        fontSize = 16.sp
+                    )
+                    Text(
+                        "Your locations will appear here",
+                        color = Color.Gray,
+                        fontSize = 13.sp
+                    )
                 }
             }
-            item { Spacer(modifier = Modifier.height(40.dp)) }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(0.dp)
+            ) {
+                items(timelineItems.size) { idx ->
+                    val item = timelineItems[idx]
+                    val isLast = idx == timelineItems.size - 1
+                    TimelineItemCard(item = item, showConnector = !isLast)
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun DateGroupHeader(date: String) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 16.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            modifier = Modifier
-                .height(1.dp)
-                .weight(1f)
-                .background(Color(0xFF1E2D3D))
-        )
-        Spacer(modifier = Modifier.width(10.dp))
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = Color(0xFF1E2D3D)
-        ) {
-            Text(
-                text = date,
-                color = Color(0xFF8899AA),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-            )
-        }
-        Spacer(modifier = Modifier.width(10.dp))
-        Box(
-            modifier = Modifier
-                .height(1.dp)
-                .weight(1f)
-                .background(Color(0xFF1E2D3D))
-        )
-    }
-}
-
-@Composable
-private fun TimelineItem(entry: TimelineEntry, showConnector: Boolean) {
+private fun TimelineItemCard(item: TimelineItem, showConnector: Boolean) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -157,13 +172,13 @@ private fun TimelineItem(entry: TimelineEntry, showConnector: Boolean) {
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
-                    .background(entry.iconColor.copy(alpha = 0.18f)),
+                    .background(Color(0xFF4FC3F7).copy(alpha = 0.18f)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = entry.icon,
+                    imageVector = Icons.Filled.LocationOn,
                     contentDescription = null,
-                    tint = entry.iconColor,
+                    tint = Color(0xFF4FC3F7),
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -195,13 +210,13 @@ private fun TimelineItem(entry: TimelineEntry, showConnector: Boolean) {
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = entry.place,
+                        text = item.locationName,
                         color = Color.White,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 15.sp
                     )
                     Text(
-                        text = entry.timeRange,
+                        text = "${item.startTime} - ${item.endTime}",
                         color = Color(0xFF8899AA),
                         fontSize = 13.sp
                     )

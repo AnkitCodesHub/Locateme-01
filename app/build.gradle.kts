@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.google.services)
+    id("com.google.devtools.ksp")
 }
 
 // Read Maps API key from local.properties (not committed to VCS)
@@ -85,6 +86,7 @@ dependencies {
     implementation(libs.firebase.database.ktx)
     implementation("com.google.android.gms:play-services-auth:21.0.0")
     implementation("androidx.work:work-runtime-ktx:2.9.0")
+    implementation("androidx.startup:startup-runtime:1.1.1")
 
     // Location Services
     implementation(libs.play.services.location)
@@ -96,6 +98,14 @@ dependencies {
     // Coroutines
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.coroutines.play.services)
+
+    // Network
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // Room
+    implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+    ksp("androidx.room:room-compiler:2.6.1")
 
     // Image loading (Coil)
     implementation(libs.coil.compose)
