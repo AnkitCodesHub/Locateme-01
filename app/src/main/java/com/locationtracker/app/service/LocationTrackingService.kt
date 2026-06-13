@@ -21,6 +21,10 @@ import com.google.firebase.auth.FirebaseAuth
 import com.locationtracker.app.R
 import com.locationtracker.app.data.repository.LocationSharingRepository
 import com.locationtracker.app.ui.MainActivity
+import com.google.android.gms.location.ActivityRecognition
+import com.google.android.gms.location.ActivityTransition
+import com.google.android.gms.location.ActivityTransitionRequest
+import com.google.android.gms.location.DetectedActivity
 
 private const val TAG = "LocationShare"
 private const val NOTIFICATION_ID = 1001
@@ -101,6 +105,19 @@ class LocationTrackingService : Service() {
                 location = location,
                 profilePictureUrl = currentUser.photoUrl?.toString() ?: ""
             )
+
+            // Read last known activity type from sensor SharedPreferences
+            val sensorActivityName = applicationContext
+                .getSharedPreferences("activity_prefs", Context.MODE_PRIVATE)
+                .getString("last_activity", null)
+            val activityType = sensorActivityName
+                ?.let { runCatching { ActivityType.valueOf(it) }.getOrNull() }
+                ?: ActivityDetector.detectFromSpeed(
+                    if (location.hasSpeed()) location.speed else 0f
+                )
+
+            // Feed location into TripTracker state machine
+            TripTracker.onLocationUpdate(applicationContext, location, activityType)
         }
     }
 
@@ -110,6 +127,7 @@ class LocationTrackingService : Service() {
         super.onCreate()
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         createNotificationChannel()
+        startActivityRecognition()
         Log.d(TAG, "LocationTrackingService created")
     }
 
@@ -173,6 +191,44 @@ class LocationTrackingService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     // --- Internal helpers ---
+    
+    private fun startActivityRecognition() {
+        val client = ActivityRecognition.getClient(this)
+
+        val intent = Intent(this, ActivityTransitionReceiver::class.java)
+        val pendingIntent = PendingIntent.getBroadcast(
+            this, 0, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+        )
+
+        val transitions = mutableListOf<ActivityTransition>()
+        
+        val activityTypes = listOf(
+            DetectedActivity.IN_VEHICLE,
+            DetectedActivity.ON_BICYCLE,
+            DetectedActivity.ON_FOOT,
+            DetectedActivity.RUNNING,
+            DetectedActivity.WALKING,
+            DetectedActivity.STILL
+        )
+
+        activityTypes.forEach { type ->
+            transitions.add(
+                ActivityTransition.Builder()
+                    .setActivityType(type)
+                    .setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER)
+                    .build()
+            )
+        }
+
+        val request = ActivityTransitionRequest(transitions)
+        
+        try {
+            client.requestActivityTransitionUpdates(request, pendingIntent)
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Activity recognition permission denied", e)
+        }
+    }
 
     private fun stopAllAndShutdown() {
         val currentUser = auth.currentUser
@@ -188,11 +244,12 @@ class LocationTrackingService : Service() {
     private fun startLocationUpdates() {
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, LOCATION_INTERVAL_MS)
             .setMinUpdateIntervalMillis(LOCATION_FASTEST_INTERVAL_MS)
+            .setMinUpdateDistanceMeters(50f)  // GPS fires only when user moves 50m+
             .build()
 
         try {
             fusedLocationClient.requestLocationUpdates(request, locationCallback, Looper.getMainLooper())
-            Log.d(TAG, "Location updates started — interval=${LOCATION_INTERVAL_MS}ms")
+            Log.d(TAG, "Location updates started — interval=${LOCATION_INTERVAL_MS}ms, min distance=50m")
         } catch (e: SecurityException) {
             Log.e(TAG, "Location permission denied in service", e)
         }

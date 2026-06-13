@@ -37,80 +37,101 @@ class LocationTimelineWorker(
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
-        Log.d("TimelineWorker", 
-            "Worker started at ${
-                SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())}")
-        
-        val currentUser = FirebaseAuth.getInstance().currentUser
-            ?: run {
-                Log.e("TimelineWorker", "No user logged in")
-                return Result.failure()
-            }
-        
-        val userId = currentUser.uid
-        val userName = currentUser.displayName ?: "User"
-        
-        // STEP 1 - Get GPS location
-        val location = try {
-            withTimeout(12_000L) {
-                withContext(Dispatchers.IO) {
-                    getCurrentLocation(context)
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("TimelineWorker", "Location fetch timed out or failed: ${e.message}")
-            null
-        } ?: run {
-            Log.e("TimelineWorker", "Could not get location")
-            return Result.retry()
-        }
-        
-        val lat = location.latitude
-        val lng = location.longitude
-        Log.d("TimelineWorker", "GPS: $lat, $lng")
-        
-        // STEP 2 - Get exact place name from Google Places API
-        val apiKey = BuildConfig.MAPS_API_KEY
-        
-        val db = Room.databaseBuilder(
-            applicationContext,
-            LocationDatabase::class.java, "location-db"
-        ).build()
-        val locationCache = db.locationCacheDao()
+        Log.d("TimelineWorker", "Worker started at ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())}")
 
-        var locationName = ""
-        val cachedName = locationCache.getNameForCoordinates(lat.roundTo4Decimals(), lng.roundTo4Decimals())
-        
-        if (cachedName != null) {
-            locationName = cachedName
-            Log.d("TimelineWorker", "Using cached: $locationName")
+        FirebaseAuth.getInstance().currentUser ?: run {
+            Log.e("TimelineWorker", "No user logged in")
+            return Result.failure()
+        }
+
+        val sensorActivityName = applicationContext
+            .getSharedPreferences("activity_prefs", Context.MODE_PRIVATE)
+            .getString("last_activity", null)
+        val sensorActivity = sensorActivityName
+            ?.let { runCatching { ActivityType.valueOf(it) }.getOrNull() }
+
+        val latInput = inputData.getDouble("lat", 0.0)
+        val lngInput = inputData.getDouble("lng", 0.0)
+        val speedInput = inputData.getFloat("speed", 0f)
+
+        // Periodic job + sensor says stationary: skip GPS entirely
+        if (latInput == 0.0 && lngInput == 0.0 && sensorActivity == ActivityType.STATIONARY) {
+            Log.d("TimelineWorker", "User is stationary per sensor - skipping GPS")
+            return Result.success()
+        }
+
+        var speedMps = speedInput
+        val location: android.location.Location
+
+        if (latInput != 0.0 || lngInput != 0.0) {
+            // Coords came from LocationTrackingService via inputData
+            location = android.location.Location("input").also {
+                it.latitude = latInput
+                it.longitude = lngInput
+                it.speed = speedInput
+            }
         } else {
-            locationName = getExactPlaceName(lat, lng, apiKey)
-            if (locationName != "Unknown Location") {
-                locationCache.saveNameForCoordinates(lat.roundTo4Decimals(), lng.roundTo4Decimals(), locationName)
+            // Periodic fallback: fetch GPS ourselves
+            val fetched = try {
+                withTimeout(12_000L) {
+                    withContext(Dispatchers.IO) { getCurrentLocation(context) }
+                }
+            } catch (e: Exception) {
+                Log.e("TimelineWorker", "Location fetch failed: ${e.message}")
+                null
+            } ?: run {
+                Log.e("TimelineWorker", "Could not get location - retrying")
+                return Result.retry()
             }
+            location = fetched
+            speedMps = if (fetched.hasSpeed()) fetched.speed else 0f
         }
 
-        Log.d("TimelineWorker", "Place: $locationName")
-        
-        val currentTime = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
-        val currentDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-        
-        // STEP 3 - Update MY timeline
-        updateTimeline(userId, currentDate, currentTime, locationName, userName)
-        
-        // STEP 4 - Update friends view
-        updateFriendsTimeline(userId, userName, currentDate, currentTime, locationName)
-        
+        val speedActivity = ActivityDetector.detectFromSpeed(speedMps)
+        val finalActivity = when {
+            speedMps < 0.3f        -> ActivityType.STATIONARY
+            sensorActivity != null -> sensorActivity
+            else                   -> speedActivity
+        }
+
+        Log.d("TimelineWorker", "Feeding TripTracker: $finalActivity @ ${speedMps * 3.6f}km/h")
+        TripTracker.onLocationUpdate(applicationContext, location, finalActivity)
+
         return Result.success()
     }
     
+    private suspend fun updateTimelineEndTimeOnly(userId: String, currentDate: String, currentTime: String) {
+        val ref = Firebase.database.reference.child("user_timelines").child(userId).child(currentDate)
+        val snapshot = ref.get().await()
+        val lastEntry = snapshot.children.maxByOrNull { child -> child.child("timestamp").getValue(Long::class.java) ?: 0L }
+        lastEntry?.ref?.child("endTime")?.setValue(currentTime)?.await()
+    }
+    
+    private suspend fun updateFriendsTimelineEndTimeOnly(userId: String, currentDate: String, currentTime: String) {
+        try {
+            val friendsSnapshot = Firebase.database.reference.child("friends").child(userId).get().await()
+            friendsSnapshot.children.forEach { friendNode ->
+                val friendId = friendNode.key ?: return@forEach
+                val friendRef = Firebase.database.reference.child("friend_timelines").child(friendId).child(userId).child(currentDate)
+                val friendSnapshot = friendRef.get().await()
+                val lastEntry = friendSnapshot.children.maxByOrNull { child -> child.child("timestamp").getValue(Long::class.java) ?: 0L }
+                lastEntry?.ref?.child("endTime")?.setValue(currentTime)?.await()
+            }
+        } catch (e: Exception) {
+            Log.e("TimelineWorker", "Friends static update failed: ${e.message}")
+        }
+    }
+
     private suspend fun updateTimeline(
         userId: String,
         currentDate: String,
         currentTime: String,
         locationName: String,
-        userName: String
+        userName: String,
+        activityType: String,
+        activityEmoji: String,
+        activityLabel: String,
+        speedKmh: Float
     ) {
         val ref = Firebase.database.reference
             .child("user_timelines")
@@ -146,7 +167,11 @@ class LocationTimelineWorker(
                 "timestamp" to System.currentTimeMillis(),
                 "date" to currentDate,
                 "userId" to userId,
-                "userName" to userName
+                "userName" to userName,
+                "activityType" to activityType,
+                "activityEmoji" to activityEmoji,
+                "activityLabel" to activityLabel,
+                "speedKmh" to speedKmh
             )
             ref.push().setValue(newEntry).await()
             Log.d("TimelineWorker", "New location - created card: $locationName at $currentTime")
@@ -158,7 +183,11 @@ class LocationTimelineWorker(
         userName: String,
         currentDate: String,
         currentTime: String,
-        locationName: String
+        locationName: String,
+        activityType: String,
+        activityEmoji: String,
+        activityLabel: String,
+        speedKmh: Float
     ) {
         try {
             val friendsSnapshot = Firebase.database.reference
@@ -200,7 +229,11 @@ class LocationTimelineWorker(
                         "timestamp" to System.currentTimeMillis(),
                         "date" to currentDate,
                         "userId" to userId,
-                        "userName" to userName
+                        "userName" to userName,
+                        "activityType" to activityType,
+                        "activityEmoji" to activityEmoji,
+                        "activityLabel" to activityLabel,
+                        "speedKmh" to speedKmh
                     )
                     friendRef.push().setValue(entry).await()
                     Log.d("TimelineWorker", "Friend $friendId - new card: $locationName")

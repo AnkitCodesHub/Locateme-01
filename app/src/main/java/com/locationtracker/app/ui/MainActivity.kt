@@ -124,6 +124,14 @@ class MainActivity : ComponentActivity() {
                     add(Manifest.permission.POST_NOTIFICATIONS)
                 }
             }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                if (ContextCompat.checkSelfPermission(
+                        this@MainActivity, Manifest.permission.ACTIVITY_RECOGNITION
+                    ) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    add(Manifest.permission.ACTIVITY_RECOGNITION)
+                }
+            }
         }
         if (permissionsToRequest.isNotEmpty()) {
             permissionLauncher.launch(permissionsToRequest.toTypedArray())

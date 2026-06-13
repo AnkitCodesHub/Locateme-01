@@ -3,8 +3,18 @@ package com.locationtracker.app.data.local
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.RoomDatabase
+import androidx.room.Update
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
+
+// ─────────────────────────────────────────────────────────
+// Location name cache (unchanged from version 1)
+// ─────────────────────────────────────────────────────────
 
 @Entity(tableName = "location_cache", primaryKeys = ["lat", "lng"])
 data class LocationCacheEntity(
@@ -22,7 +32,94 @@ interface LocationCacheDao {
     suspend fun saveNameForCoordinates(lat: Double, lng: Double, placeName: String)
 }
 
-@Database(entities = [LocationCacheEntity::class], version = 1, exportSchema = false)
+// ─────────────────────────────────────────────────────────
+// Timeline entries — PLACE and TRAVEL
+// ─────────────────────────────────────────────────────────
+
+@Entity(tableName = "timeline_entries")
+data class TimelineEntryEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+
+    // "PLACE" or "TRAVEL"
+    val type: String,
+
+    // PLACE fields
+    val placeName: String = "",
+    val placeAddress: String = "",
+    val placeIcon: String = "\uD83D\uDCCD",
+
+    // TRAVEL fields
+    val activityType: String = "",
+    val activityEmoji: String = "",
+    val distanceMeters: Float = 0f,
+    val durationMinutes: Int = 0,
+
+    // Common
+    val startTime: Long,
+    val endTime: Long? = null,   // null = ongoing
+    val startLat: Double = 0.0,
+    val startLng: Double = 0.0,
+    val endLat: Double = 0.0,
+    val endLng: Double = 0.0,
+    val date: String = ""        // "YYYY-MM-DD"
+)
+
+@Dao
+interface TimelineDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(entry: TimelineEntryEntity): Long
+
+    @Update
+    suspend fun update(entry: TimelineEntryEntity)
+
+    @Query("SELECT * FROM timeline_entries WHERE date = :date ORDER BY startTime ASC")
+    suspend fun getEntriesForDate(date: String): List<TimelineEntryEntity>
+
+    @Query("SELECT * FROM timeline_entries WHERE type = :type AND endTime IS NULL LIMIT 1")
+    suspend fun getOngoingEntry(type: String): TimelineEntryEntity?
+
+    @Query("DELETE FROM timeline_entries WHERE id = :id")
+    suspend fun deleteById(id: Long)
+}
+
+// ─────────────────────────────────────────────────────────
+// Database — version 2 adds timeline_entries table
+// ─────────────────────────────────────────────────────────
+
+val MIGRATION_1_2 = object : Migration(1, 2) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS timeline_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                type TEXT NOT NULL,
+                placeName TEXT NOT NULL DEFAULT '',
+                placeAddress TEXT NOT NULL DEFAULT '',
+                placeIcon TEXT NOT NULL DEFAULT '📍',
+                activityType TEXT NOT NULL DEFAULT '',
+                activityEmoji TEXT NOT NULL DEFAULT '',
+                distanceMeters REAL NOT NULL DEFAULT 0.0,
+                durationMinutes INTEGER NOT NULL DEFAULT 0,
+                startTime INTEGER NOT NULL,
+                endTime INTEGER,
+                startLat REAL NOT NULL DEFAULT 0.0,
+                startLng REAL NOT NULL DEFAULT 0.0,
+                endLat REAL NOT NULL DEFAULT 0.0,
+                endLng REAL NOT NULL DEFAULT 0.0,
+                date TEXT NOT NULL DEFAULT ''
+            )
+            """.trimIndent()
+        )
+    }
+}
+
+@Database(
+    entities = [LocationCacheEntity::class, TimelineEntryEntity::class],
+    version = 2,
+    exportSchema = false
+)
 abstract class LocationDatabase : RoomDatabase() {
     abstract fun locationCacheDao(): LocationCacheDao
+    abstract fun timelineDao(): TimelineDao
 }
