@@ -9,7 +9,6 @@ import com.google.firebase.ktx.Firebase
 import com.locationtracker.app.BuildConfig
 import com.locationtracker.app.data.local.LocationDatabase
 import com.locationtracker.app.data.local.TimelineEntryEntity
-import androidx.room.Room
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -58,9 +57,7 @@ object TripTracker {
 
         Log.d(TAG, "Location update: ${location.latitude}, ${location.longitude} speed=${speedKmh}km/h moving=$isMoving")
 
-        val db = Room.databaseBuilder(context, LocationDatabase::class.java, "location-db")
-            .addMigrations(com.locationtracker.app.data.local.MIGRATION_1_2)
-            .build()
+        val db = LocationDatabase.getInstance(context)
         val dao = db.timelineDao()
 
         CoroutineScope(Dispatchers.IO).launch {

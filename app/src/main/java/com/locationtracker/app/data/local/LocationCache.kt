@@ -1,5 +1,6 @@
 package com.locationtracker.app.data.local
 
+import android.content.Context
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
@@ -7,10 +8,12 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
+import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Update
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import kotlinx.coroutines.flow.Flow
 
 // ─────────────────────────────────────────────────────────
 // Location name cache (unchanged from version 1)
@@ -73,8 +76,13 @@ interface TimelineDao {
     @Update
     suspend fun update(entry: TimelineEntryEntity)
 
+    /** Reactive Flow query — emits whenever the table changes. */
     @Query("SELECT * FROM timeline_entries WHERE date = :date ORDER BY startTime ASC")
-    suspend fun getEntriesForDate(date: String): List<TimelineEntryEntity>
+    fun getEntriesForDate(date: String): Flow<List<TimelineEntryEntity>>
+
+    /** One-shot suspend query for use inside coroutines (TripTracker). */
+    @Query("SELECT * FROM timeline_entries WHERE date = :date ORDER BY startTime ASC")
+    suspend fun getEntriesForDateOnce(date: String): List<TimelineEntryEntity>
 
     @Query("SELECT * FROM timeline_entries WHERE type = :type AND endTime IS NULL LIMIT 1")
     suspend fun getOngoingEntry(type: String): TimelineEntryEntity?
@@ -122,4 +130,22 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
 abstract class LocationDatabase : RoomDatabase() {
     abstract fun locationCacheDao(): LocationCacheDao
     abstract fun timelineDao(): TimelineDao
+
+    companion object {
+        @Volatile private var INSTANCE: LocationDatabase? = null
+
+        /** Process-wide singleton — safe to call from any thread / coroutine. */
+        fun getInstance(context: Context): LocationDatabase {
+            return INSTANCE ?: synchronized(this) {
+                INSTANCE ?: Room.databaseBuilder(
+                    context.applicationContext,
+                    LocationDatabase::class.java,
+                    "location-db"
+                )
+                    .addMigrations(MIGRATION_1_2)
+                    .build()
+                    .also { INSTANCE = it }
+            }
+        }
+    }
 }
