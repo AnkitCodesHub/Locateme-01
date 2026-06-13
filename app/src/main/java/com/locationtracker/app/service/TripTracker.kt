@@ -8,7 +8,7 @@ import com.google.firebase.database.ktx.database
 import com.google.firebase.ktx.Firebase
 import com.locationtracker.app.BuildConfig
 import com.locationtracker.app.data.local.LocationDatabase
-import com.locationtracker.app.data.local.TimelineEntryEntity
+import com.locationtracker.app.data.local.TimelineEntry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -82,7 +82,7 @@ object TripTracker {
         currentPlaceId?.let { placeId ->
             val place = dao.getOngoingEntry("PLACE") ?: return@let
             val ended = place.copy(endTime = System.currentTimeMillis())
-            dao.update(ended)
+            dao.updateEntry(ended)
             writeEntryToFirebase(context, ended)
             Log.d(TAG, "Closed PLACE entry: ${place.placeName}")
             currentPlaceId = null
@@ -104,7 +104,7 @@ object TripTracker {
 
         if (currentTravelId == null) {
             // Start new TRAVEL entry
-            val entry = TimelineEntryEntity(
+            val entry = TimelineEntry(
                 type = "TRAVEL",
                 activityType = activityType.name,
                 activityEmoji = emoji,
@@ -133,7 +133,7 @@ object TripTracker {
                 activityEmoji = emoji,
                 activityType = activityType.name
             )
-            dao.update(updated)
+            dao.updateEntry(updated)
             writeEntryToFirebase(context, updated)
         }
 
@@ -169,7 +169,7 @@ object TripTracker {
                     endLat = location.latitude,
                     endLng = location.longitude
                 )
-                dao.update(closedTravel)
+                dao.updateEntry(closedTravel)
                 writeEntryToFirebase(context, closedTravel)
                 Log.d(TAG, "Closed TRAVEL entry — dist=${totalDistanceMeters}m dur=${durationMin}min")
                 currentTravelId = null
@@ -182,7 +182,7 @@ object TripTracker {
             val placeAddress = getPlaceAddress(location.latitude, location.longitude, apiKey)
             val placeIcon = iconForPlaceName(placeName)
 
-            val placeEntry = TimelineEntryEntity(
+            val placeEntry = TimelineEntry(
                 type = "PLACE",
                 placeName = placeName,
                 placeAddress = placeAddress,
@@ -202,7 +202,7 @@ object TripTracker {
 
     // ── Firebase sync ────────────────────────────────────
 
-    private fun writeEntryToFirebase(context: Context, entry: TimelineEntryEntity) {
+    private fun writeEntryToFirebase(context: Context, entry: TimelineEntry) {
         val currentUser = FirebaseAuth.getInstance().currentUser ?: return
         val userId = currentUser.uid
         val userName = currentUser.displayName ?: "User"

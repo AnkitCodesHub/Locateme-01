@@ -39,8 +39,8 @@ interface LocationCacheDao {
 // Timeline entries — PLACE and TRAVEL
 // ─────────────────────────────────────────────────────────
 
-@Entity(tableName = "timeline_entries")
-data class TimelineEntryEntity(
+@Entity(tableName = "timeline_table")
+data class TimelineEntry(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
 
@@ -71,35 +71,35 @@ data class TimelineEntryEntity(
 @Dao
 interface TimelineDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insert(entry: TimelineEntryEntity): Long
+    suspend fun insert(entry: TimelineEntry): Long
 
     @Update
-    suspend fun update(entry: TimelineEntryEntity)
+    suspend fun updateEntry(entry: TimelineEntry)
 
     /** Reactive Flow query — emits whenever the table changes. */
-    @Query("SELECT * FROM timeline_entries WHERE date = :date ORDER BY startTime ASC")
-    fun getEntriesForDate(date: String): Flow<List<TimelineEntryEntity>>
+    @Query("SELECT * FROM timeline_table WHERE date = :date ORDER BY startTime ASC")
+    fun getEntriesForDate(date: String): Flow<List<TimelineEntry>>
 
     /** One-shot suspend query for use inside coroutines (TripTracker). */
-    @Query("SELECT * FROM timeline_entries WHERE date = :date ORDER BY startTime ASC")
-    suspend fun getEntriesForDateOnce(date: String): List<TimelineEntryEntity>
+    @Query("SELECT * FROM timeline_table WHERE date = :date ORDER BY startTime ASC")
+    suspend fun getEntriesForDateOnce(date: String): List<TimelineEntry>
 
-    @Query("SELECT * FROM timeline_entries WHERE type = :type AND endTime IS NULL LIMIT 1")
-    suspend fun getOngoingEntry(type: String): TimelineEntryEntity?
+    @Query("SELECT * FROM timeline_table WHERE type = :type AND endTime IS NULL LIMIT 1")
+    suspend fun getOngoingEntry(type: String): TimelineEntry?
 
-    @Query("DELETE FROM timeline_entries WHERE id = :id")
+    @Query("DELETE FROM timeline_table WHERE id = :id")
     suspend fun deleteById(id: Long)
 }
 
 // ─────────────────────────────────────────────────────────
-// Database — version 2 adds timeline_entries table
+// Database — version 2 adds timeline_table
 // ─────────────────────────────────────────────────────────
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
     override fun migrate(database: SupportSQLiteDatabase) {
         database.execSQL(
             """
-            CREATE TABLE IF NOT EXISTS timeline_entries (
+            CREATE TABLE IF NOT EXISTS timeline_table (
                 id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                 type TEXT NOT NULL,
                 placeName TEXT NOT NULL DEFAULT '',
@@ -123,7 +123,7 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
 }
 
 @Database(
-    entities = [LocationCacheEntity::class, TimelineEntryEntity::class],
+    entities = [LocationCacheEntity::class, TimelineEntry::class],
     version = 2,
     exportSchema = false
 )

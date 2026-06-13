@@ -4,7 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.locationtracker.app.data.local.LocationDatabase
-import com.locationtracker.app.data.local.TimelineEntryEntity
+import com.locationtracker.app.data.local.TimelineEntry
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -20,64 +20,53 @@ import java.util.Locale
 
 /**
  * ViewModel for the Timeline screen.
- *
- * Uses [AndroidViewModel] so it can access the application context for Room —
- * no Hilt required. The ViewModel exposes a reactive [entries] StateFlow that
- * re-emits automatically whenever the Room table changes (via DAO Flow query).
+ * Uses [AndroidViewModel] so it can access the application context for Room.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class TimelineViewModel(application: Application) : AndroidViewModel(application) {
 
     private val dao = LocationDatabase.getInstance(application).timelineDao()
 
-    // ── Date navigation ───────────────────────────────────────────────────────
+    private val _selectedDate = MutableStateFlow(getTodayLabel())
+    val selectedDate = _selectedDate.asStateFlow()
 
-    /** Offset from today: 0 = today, -1 = yesterday, etc. */
-    private val _dayOffset = MutableStateFlow(0)
-    val dayOffset: StateFlow<Int> = _dayOffset.asStateFlow()
+    private val _currentDateKey = MutableStateFlow(getTodayKey())
 
-    /** "yyyy-MM-dd" key used to query Room — derived from _dayOffset. */
-    val currentDateKey: StateFlow<String> = _dayOffset
-        .map { offset -> dateKey(offset) }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, dateKey(0))
-
-    /** Human-readable label for the date nav bar. */
-    val displayDate: StateFlow<String> = _dayOffset
-        .map { offset ->
-            when (offset) {
-                0    -> "Today"
-                -1   -> "Yesterday"
-                else -> {
-                    val cal = Calendar.getInstance()
-                    cal.add(Calendar.DAY_OF_YEAR, offset)
-                    SimpleDateFormat("EEE, d MMM", Locale.getDefault()).format(cal.time)
-                }
-            }
-        }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, "Today")
-
-    // ── Entries ───────────────────────────────────────────────────────────────
-
-    /** Live list of timeline entries for the selected day. Emits on every DB change. */
-    val entries: StateFlow<List<TimelineEntryEntity>> = currentDateKey
-        .flatMapLatest { key -> dao.getEntriesForDate(key) }
+    val entries: StateFlow<List<TimelineEntry>> = _currentDateKey
+        .flatMapLatest { date -> dao.getEntriesForDate(date) }
         .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
-    // ── Navigation ────────────────────────────────────────────────────────────
-
-    fun previousDay() { _dayOffset.value-- }
-
-    fun nextDay() {
-        if (_dayOffset.value < 0) _dayOffset.value++
+    fun previousDay() {
+        shiftDay(-1)
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    fun nextDay() {
+        shiftDay(1)
+    }
 
-    companion object {
-        fun dateKey(offsetDays: Int): String {
-            val cal = Calendar.getInstance()
-            cal.add(Calendar.DAY_OF_YEAR, offsetDays)
-            return SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(cal.time)
+    private fun shiftDay(delta: Int) {
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        val cal = Calendar.getInstance()
+        cal.time = sdf.parse(_currentDateKey.value) ?: Date()
+        cal.add(Calendar.DAY_OF_YEAR, delta)
+        _currentDateKey.value = sdf.format(cal.time)
+        _selectedDate.value = getLabel(cal.time)
+    }
+
+    private fun getTodayKey() = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+
+    private fun getTodayLabel() = SimpleDateFormat("MMMM d, yyyy", Locale.getDefault()).format(Date())
+
+    private fun getLabel(date: Date): String {
+        val cal = Calendar.getInstance()
+        val today = Calendar.getInstance()
+        val yesterday = Calendar.getInstance()
+        yesterday.add(Calendar.DAY_OF_YEAR, -1)
+        cal.time = date
+        return when {
+            cal.get(Calendar.DAY_OF_YEAR) == today.get(Calendar.DAY_OF_YEAR) -> "Today"
+            cal.get(Calendar.DAY_OF_YEAR) == yesterday.get(Calendar.DAY_OF_YEAR) -> "Yesterday"
+            else -> SimpleDateFormat("MMMM d", Locale.getDefault()).format(date)
         }
     }
 }
