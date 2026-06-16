@@ -19,6 +19,7 @@
           "client_type": 1,
           "android_info": {
             "package_name": "com.locationtracker.app",
+
             "certificate_hash": "b00a5347909e64655f2eabc92a6ffe8a142c3732"
           }
         },

@@ -121,7 +121,7 @@ class FriendViewModel : ViewModel() {
         }
     }
 
-    fun sendFriendRequest(friendEmail: String) {
+    fun sendFriendRequest(friendName: String) {
         val user = auth.currentUser ?: return
         viewModelScope.launch {
             _isLoading.value = true
@@ -129,7 +129,7 @@ class FriendViewModel : ViewModel() {
                 currentUserId = user.uid,
                 currentUserDisplayName = user.displayName ?: user.email ?: "Unknown",
                 currentUserEmail = user.email ?: "",
-                friendEmail = friendEmail
+                friendName = friendName
             )
             _isLoading.value = false
             if (result.isSuccess) {

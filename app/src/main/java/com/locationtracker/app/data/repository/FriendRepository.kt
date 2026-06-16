@@ -22,9 +22,10 @@ private const val TAG = "LocateMeDebug"
  *
  * users/
  *   {userId}/
- *     uid:         String
- *     displayName: String
- *     email:       String
+ *     uid:              String
+ *     displayName:      String          — original casing, shown in UI
+ *     displayNameLower: String          — lowercase copy, used for search queries
+ *     email:            String
  *
  * friend_requests/
  *   {receiverUserId}/
@@ -77,33 +78,42 @@ class FriendRepository(
     }
 
     /**
-     * Sends a friend request from [currentUserId] to [friendEmail].
+     * Sends a friend request from [currentUserId] to a user found by [friendName].
+     * Search is case-insensitive: compares against the [displayNameLower] field.
+     * Returns a list of matching candidates — caller should handle disambiguation
+     * if multiple users share the same lowercase name (first match wins for now).
      */
     suspend fun sendFriendRequest(
         currentUserId: String,
         currentUserDisplayName: String,
         currentUserEmail: String,
-        friendEmail: String
+        friendName: String
     ): Result<String> {
-        if (friendEmail.equals(currentUserEmail, ignoreCase = true)) {
-            return Result.failure(Exception("You can't add yourself as a friend"))
-        }
+        val queryName = friendName.trim().lowercase()
 
         return try {
+            // Range query on displayNameLower for prefix-style case-insensitive search
             val usersSnapshot = database.reference
                 .child("users")
-                .orderByChild("email")
-                .equalTo(friendEmail.trim().lowercase())
+                .orderByChild("displayNameLower")
+                .startAt(queryName)
+                .endAt(queryName + "\uf8ff")
                 .get()
                 .await()
 
             if (!usersSnapshot.exists() || !usersSnapshot.hasChildren()) {
-                return Result.failure(Exception("No user found with email: $friendEmail"))
+                return Result.failure(Exception("No user found with name \"$friendName\"."))
             }
 
-            val targetSnap = usersSnapshot.children.first()
+            // Filter out the current user from results
+            val candidates = usersSnapshot.children.filter { it.key != currentUserId }
+            if (candidates.isEmpty()) {
+                return Result.failure(Exception("No other user found with name \"$friendName\"."))
+            }
+
+            val targetSnap = candidates.first()
             val targetId = targetSnap.key ?: return Result.failure(Exception("Invalid target ID"))
-            val targetName = targetSnap.child("displayName").getValue(String::class.java) ?: friendEmail
+            val targetName = targetSnap.child("displayName").getValue(String::class.java) ?: friendName
 
             val alreadyFriend = friendsRef().child(currentUserId).child(targetId).get().await()
             if (alreadyFriend.exists()) {
@@ -115,9 +125,9 @@ class FriendRepository(
                 return Result.failure(Exception("Friend request already sent to $targetName"))
             }
 
-            Log.d(TAG, "Sending request from $currentUserId to $targetId")
+            Log.d(TAG, "Sending request from $currentUserId to $targetId ($targetName)")
             requestsRef().child(targetId).child(currentUserId).setValue(FriendRequest.STATUS_PENDING).await()
-            
+
             Result.success(targetName)
         } catch (e: Exception) {
             Log.e(TAG, "sendFriendRequest failed", e)
@@ -224,15 +234,36 @@ class FriendRepository(
 
     /**
      * Writes the current user's profile data to Firebase.
+     * Always persists [displayNameLower] (lowercase copy) alongside [displayName]
+     * so that case-insensitive name search queries work correctly.
      */
     suspend fun writeUserProfile(userId: String, displayName: String, email: String) {
         val profileData = mapOf(
             "uid" to userId,
             "displayName" to displayName,
+            "displayNameLower" to displayName.lowercase(),
             "email" to email
         )
         database.reference.child("users").child(userId).updateChildren(profileData).await()
-        Log.d(TAG, "Wrote profile for userId=$userId email=$email")
+        Log.d(TAG, "Wrote profile for userId=$userId displayName=$displayName")
+    }
+
+    /**
+     * Migration helper — called on every login for existing users.
+     * If [displayNameLower] is missing from the user's node, backfills it
+     * so they become searchable by name without requiring a sign-up again.
+     */
+    suspend fun ensureDisplayNameLower(userId: String) {
+        try {
+            val snap = usersRef().child(userId).get().await()
+            if (snap.exists() && snap.child("displayNameLower").getValue(String::class.java) == null) {
+                val displayName = snap.child("displayName").getValue(String::class.java) ?: return
+                usersRef().child(userId).child("displayNameLower").setValue(displayName.lowercase()).await()
+                Log.d(TAG, "Backfilled displayNameLower for userId=$userId")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "ensureDisplayNameLower failed for userId=$userId", e)
+        }
     }
 
     suspend fun getFriendById(currentUserId: String, friendId: String): Friend? {

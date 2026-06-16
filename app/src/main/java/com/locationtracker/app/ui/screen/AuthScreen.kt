@@ -116,6 +116,7 @@ fun AuthScreen(
                         "uid" to userId,
                         "email" to userEmail,
                         "displayName" to userName,
+                        "displayNameLower" to userName.lowercase(),
                         "profilePictureUrl" to (currentUser.photoUrl?.toString() ?: "")
                     )
                 
@@ -167,6 +168,7 @@ fun AuthScreen(
                                         "uid" to userId,
                                         "email" to userEmail,
                                         "displayName" to userName,
+                                        "displayNameLower" to userName.lowercase(),
                                         "profilePictureUrl" to (currentUser.photoUrl?.toString() ?: "")
                                     )
                                 

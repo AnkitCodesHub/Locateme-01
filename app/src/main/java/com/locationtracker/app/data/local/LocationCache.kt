@@ -36,7 +36,7 @@ interface LocationCacheDao {
 }
 
 // ─────────────────────────────────────────────────────────
-// Timeline entries — PLACE and TRAVEL
+// Timeline entries — SIMPLE MODEL
 // ─────────────────────────────────────────────────────────
 
 @Entity(tableName = "timeline_table")
@@ -50,81 +50,73 @@ data class TimelineEntry(
     // PLACE fields
     val placeName: String = "",
     val placeAddress: String = "",
-    val placeIcon: String = "\uD83D\uDCCD",
 
     // TRAVEL fields
     val activityType: String = "",
     val activityEmoji: String = "",
+    val activityLabel: String = "",
+    val speedKmh: Float = 0f,
     val distanceMeters: Float = 0f,
-    val durationMinutes: Int = 0,
 
-    // Common
+    // Both types
     val startTime: Long,
-    val endTime: Long? = null,   // null = ongoing
-    val startLat: Double = 0.0,
-    val startLng: Double = 0.0,
-    val endLat: Double = 0.0,
-    val endLng: Double = 0.0,
-    val date: String = ""        // "YYYY-MM-DD"
+    // null = still ongoing (place still open)
+    val endTime: Long? = null,
+    val latitude: Double = 0.0,
+    val longitude: Double = 0.0,
+    val date: String = ""
 )
 
 @Dao
 interface TimelineDao {
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(entry: TimelineEntry): Long
 
     @Update
-    suspend fun updateEntry(entry: TimelineEntry)
+    suspend fun update(entry: TimelineEntry)
 
-    /** Reactive Flow query — emits whenever the table changes. */
-    @Query("SELECT * FROM timeline_table WHERE date = :date ORDER BY startTime ASC")
+    // Get last open entry (endTime is null)
+    @Query("""
+        SELECT * FROM timeline_table
+        WHERE endTime IS NULL
+        ORDER BY startTime DESC
+        LIMIT 1
+    """)
+    suspend fun getOpenEntry(): TimelineEntry?
+
+    // Get all entries for a date, newest first
+    @Query("""
+        SELECT * FROM timeline_table
+        WHERE date = :date
+        ORDER BY startTime ASC
+    """)
     fun getEntriesForDate(date: String): Flow<List<TimelineEntry>>
 
-    /** One-shot suspend query for use inside coroutines (TripTracker). */
-    @Query("SELECT * FROM timeline_table WHERE date = :date ORDER BY startTime ASC")
-    suspend fun getEntriesForDateOnce(date: String): List<TimelineEntry>
+    // Close any open entry right now
+    @Query("""
+        UPDATE timeline_table
+        SET endTime = :endTime
+        WHERE endTime IS NULL
+    """)
+    suspend fun closeOpenEntry(endTime: Long)
 
-    @Query("SELECT * FROM timeline_table WHERE type = :type AND endTime IS NULL LIMIT 1")
-    suspend fun getOngoingEntry(type: String): TimelineEntry?
-
-    @Query("DELETE FROM timeline_table WHERE id = :id")
-    suspend fun deleteById(id: Long)
+    // Wipe bad zero-distance travel entries
+    @Query("""
+        DELETE FROM timeline_table
+        WHERE type = 'TRAVEL'
+        AND distanceMeters < 50
+    """)
+    suspend fun deleteBadTravelEntries()
 }
 
 // ─────────────────────────────────────────────────────────
-// Database — version 2 adds timeline_table
+// Database
 // ─────────────────────────────────────────────────────────
-
-val MIGRATION_1_2 = object : Migration(1, 2) {
-    override fun migrate(database: SupportSQLiteDatabase) {
-        database.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS timeline_table (
-                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                type TEXT NOT NULL,
-                placeName TEXT NOT NULL DEFAULT '',
-                placeAddress TEXT NOT NULL DEFAULT '',
-                placeIcon TEXT NOT NULL DEFAULT '📍',
-                activityType TEXT NOT NULL DEFAULT '',
-                activityEmoji TEXT NOT NULL DEFAULT '',
-                distanceMeters REAL NOT NULL DEFAULT 0.0,
-                durationMinutes INTEGER NOT NULL DEFAULT 0,
-                startTime INTEGER NOT NULL,
-                endTime INTEGER,
-                startLat REAL NOT NULL DEFAULT 0.0,
-                startLng REAL NOT NULL DEFAULT 0.0,
-                endLat REAL NOT NULL DEFAULT 0.0,
-                endLng REAL NOT NULL DEFAULT 0.0,
-                date TEXT NOT NULL DEFAULT ''
-            )
-            """.trimIndent()
-        )
-    }
-}
 
 @Database(
     entities = [LocationCacheEntity::class, TimelineEntry::class],
-    version = 2,
+    version = 5,
     exportSchema = false
 )
 abstract class LocationDatabase : RoomDatabase() {
@@ -142,7 +134,7 @@ abstract class LocationDatabase : RoomDatabase() {
                     LocationDatabase::class.java,
                     "location-db"
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .fallbackToDestructiveMigration()
                     .build()
                     .also { INSTANCE = it }
             }

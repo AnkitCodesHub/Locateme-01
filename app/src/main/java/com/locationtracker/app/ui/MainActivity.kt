@@ -1,5 +1,7 @@
 package com.locationtracker.app.ui
 
+import android.content.Context
+
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
@@ -28,8 +30,19 @@ import androidx.work.WorkManager
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.Constraints
 import androidx.work.NetworkType
-import com.locationtracker.app.service.LocationTimelineWorker
 import java.util.concurrent.TimeUnit
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
+import com.google.android.gms.location.LocationServices
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import com.locationtracker.app.data.local.TimelineEntry
+import com.locationtracker.app.data.local.LocationDatabase
+import com.locationtracker.app.utils.LocationUtils.getPlaceName
 
 class MainActivity : ComponentActivity() {
 
@@ -47,29 +60,79 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         requestRuntimePermissions()
 
-        // Fire once immediately on app open
-        val immediateWork = OneTimeWorkRequestBuilder<LocationTimelineWorker>()
-            .addTag("immediate_timeline")
-            .build()
-        WorkManager.getInstance(this).enqueue(immediateWork)
+        val database = LocationDatabase.getInstance(this)
 
-        // Then every 10 minutes
-        val periodicWork = PeriodicWorkRequestBuilder<LocationTimelineWorker>(10, TimeUnit.MINUTES)
-            .addTag("periodic_timeline")
-            .setConstraints(
-                Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.CONNECTED)
-                    .build()
-            )
-            .build()
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val dao = database.timelineDao()
+                val todayKey = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
 
-        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-            "LocationTimelineWorker",
-            ExistingPeriodicWorkPolicy.KEEP,
-            periodicWork
-        )
+                // Clean old bad entries
+                dao.deleteBadTravelEntries()
 
-        Log.d("MainActivity", "WorkManager scheduled - immediate + every 10 minutes")
+                // Get today's entries
+                val todayEntries = dao.getEntriesForDate(todayKey).first()
+
+                if (todayEntries.isEmpty()) {
+                    // Get last known location
+                    val fusedClient = LocationServices.getFusedLocationProviderClient(this@MainActivity)
+                    if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                        val lastLoc = fusedClient.lastLocation.await()
+
+                        if (lastLoc != null) {
+                            val placeName = getPlaceName(this@MainActivity, lastLoc.latitude, lastLoc.longitude)
+                            val entry = TimelineEntry(
+                                type = "PLACE",
+                                placeName = placeName,
+                                startTime = System.currentTimeMillis(),
+                                endTime = null,
+                                latitude = lastLoc.latitude,
+                                longitude = lastLoc.longitude,
+                                date = todayKey
+                            )
+                            dao.insert(entry)
+                            Log.d("MainActivity", "Initial place created: $placeName")
+                        }
+                    }
+                }
+
+                // FIX EXISTING BAD ENTRIES IN DATABASE
+                val prefs = getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+                val fixed = prefs.getBoolean("regeocoded_v3", false)
+                if (!fixed) {
+                    val entries = dao.getEntriesForDate(todayKey).first()
+                    for (entry in entries) {
+                        // Fix entries whose placeName looks like coordinates or is empty / "Unknown location"
+                        val needsFix = entry.type == "PLACE" && (
+                            entry.placeName.isBlank() ||
+                            entry.placeName.matches(Regex("-?\\d+\\.\\d+.*")) ||
+                            entry.placeName == "Unknown location" ||
+                            entry.placeName == "Unknown Place" ||
+                            entry.placeName == "Unknown" ||
+                            entry.placeName == "Current Location"
+                        )
+
+                        if (needsFix) {
+                            val name = com.locationtracker.app.utils.LocationUtils.getPlaceName(
+                                this@MainActivity, entry.latitude, entry.longitude
+                            )
+                            val addr = com.locationtracker.app.utils.LocationUtils.getPlaceAddress(
+                                this@MainActivity, entry.latitude, entry.longitude
+                            )
+                            dao.update(entry.copy(
+                                placeName = name,
+                                placeAddress = addr
+                            ))
+                            Log.d("MainActivity", "Re-geocoded: $name")
+                        }
+                    }
+                    prefs.edit().putBoolean("regeocoded_v3", true).apply()
+                }
+
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Startup error: ${e.message}")
+            }
+        }
 
         setContent {
             LocateMeTheme {

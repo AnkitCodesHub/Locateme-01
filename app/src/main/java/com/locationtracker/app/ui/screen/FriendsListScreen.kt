@@ -24,7 +24,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PersonAdd
@@ -166,7 +165,7 @@ fun FriendsListScreen(
                         EmptyState(
                             icon = { Icon(Icons.Filled.PersonAdd, null, tint = Color(0xFF334455), modifier = Modifier.size(64.dp)) },
                             title = "No friends yet",
-                            subtitle = "Tap + to add a friend by email"
+                            subtitle = "Tap + to add a friend by name"
                         )
                     } else {
                         LazyColumn(
@@ -211,7 +210,7 @@ fun FriendsListScreen(
     if (showAddFriendDialog) {
         AddFriendDialog(
             isLoading = isLoading,
-            onAdd = { email -> friendViewModel.sendFriendRequest(email) },
+            onAdd = { name -> friendViewModel.sendFriendRequest(name) },
             onDismiss = { showAddFriendDialog = false }
         )
     }
@@ -302,7 +301,7 @@ private fun AddFriendDialog(
     onAdd: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var emailInput by remember { mutableStateOf("") }
+    var nameInput by remember { mutableStateOf("") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -311,14 +310,14 @@ private fun AddFriendDialog(
         title = { Text("Add Friend", color = Color.White, fontWeight = FontWeight.Bold) },
         text = {
             Column {
-                Text("Enter your friend's email address to send a friend request.", color = Color(0xFF8899AA), fontSize = 14.sp)
+                Text("Enter your friend's display name to send a friend request.", color = Color(0xFF8899AA), fontSize = 14.sp)
                 Spacer(Modifier.height(14.dp))
                 OutlinedTextField(
-                    value = emailInput,
-                    onValueChange = { emailInput = it },
-                    label = { Text("Friend's email", color = Color(0xFF8899AA)) },
-                    leadingIcon = { Icon(Icons.Filled.Email, null, tint = Color(0xFF4FC3F7)) },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Done),
+                    value = nameInput,
+                    onValueChange = { nameInput = it },
+                    label = { Text("Search by name", color = Color(0xFF8899AA)) },
+                    leadingIcon = { Icon(Icons.Filled.PersonSearch, null, tint = Color(0xFF4FC3F7)) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Done),
                     singleLine = true,
                     enabled = !isLoading,
                     modifier = Modifier.fillMaxWidth(),
@@ -336,8 +335,8 @@ private fun AddFriendDialog(
         },
         confirmButton = {
             Button(
-                onClick = { if (emailInput.isNotBlank()) onAdd(emailInput.trim()) },
-                enabled = emailInput.isNotBlank() && !isLoading,
+                onClick = { if (nameInput.isNotBlank()) onAdd(nameInput.trim()) },
+                enabled = nameInput.isNotBlank() && !isLoading,
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0288D1))
             ) {
                 if (isLoading) CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
